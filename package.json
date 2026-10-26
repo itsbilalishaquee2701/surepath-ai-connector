@@ -1,0 +1,8 @@
+{
+  "name": "surepath-ai-connector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bridge between Zoho CRM, Vapi and Twilio: call cadence, retries, SMS follow-up, CRM logging.",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}
