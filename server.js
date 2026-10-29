@@ -40,13 +40,13 @@ const MAX_ATTEMPTS = 4;
 const SLOTS_CT = [9, 13, 17]; // attempt hours, America/Chicago
 
 const VOICEMAILS = {
-  1: "Hi {firstName}, this is Emma with Sure Path Asset Recovery. I'm calling because our records confirm there are surplus funds from your foreclosure at {propertyAddress} that are legally yours. This isn't a sales call. I'm reaching out because the government won't. Please give me a call back at (307) 218-3036. These funds do have a state deadline, so I'd hate for you to miss out. Thanks, {firstName}.",
-  2: "Hey {firstName}, it's Emma again from Sure Path Asset Recovery. I wanted to follow up because the surplus funds associated with your property have a state-imposed deadline, and I'd really hate to see you lose money that's rightfully yours. There's no cost to you at all. Just call me back at (307) 218-3036 and we can get things moving right away. Hope to hear from you soon.",
-  3: "Hi {firstName}, this is Emma from Sure Path Asset Recovery. I'm reaching out one more time because we've helped thousands of families recover between ten thousand and one hundred thousand dollars in foreclosure surplus funds. No upfront cost, no obligation. Call me at (307) 218-3036. Take care.",
-  4: "Hello, this message is from Sure Path Asset Recovery for {fullName}. Surplus funds associated with the property at {propertyAddress} have been identified as due to you as the previous owner. These funds are subject to a state-imposed deadline, after which they will no longer be recoverable. Please contact us at (307) 218-3036 or visit www.surepathassetrecovery.com. Thank you.",
+  1: "Hello, this is Emma from Sure Path Asset Recovery. I've been trying to reach {firstName}. I can't legally provide details on this message, but we've identified surplus funds from a property sale that belong to you. Call us the minute you hear this message. My number is (855) 968-4599. Thank you!",
+  2: "Hi {firstName}, this is Emma from Sure Path Asset Recovery following up. I can't legally say what this is about on the answering machine, but it's all good news financially for you. Call me the minute you hear this message at (855) 968-4599. Thank you!",
+  3: "Hi {firstName}, Emma again from Sure Path Asset Recovery. The surplus funds tied to your property have a state deadline and I'd hate for you to miss out. There's no cost to you. Please call me back at (855) 968-4599. Thank you!",
+  4: "Hello, this message is from Sure Path Asset Recovery for {fullName}. Surplus funds associated with the property at {propertyAddress} have been identified as due to you. These funds are subject to a state deadline, after which they are no longer recoverable. Please contact us at (855) 968-4599 or visit www.surepathassetrecovery.com. Thank you.",
 };
 
-const SMS_MISSED_CALL = "Hi {firstName}, this is Emma from Sure Path Asset Recovery. I just tried calling you about surplus funds from your property that may belong to you. There is no cost to you. Call us back at (307) 218-3036 or visit www.surepathassetrecovery.com. Reply STOP to opt out.";
+const SMS_MISSED_CALL = "Hi {firstName}, I just tried calling you regarding surplus funds from your property that belong to you. These funds have a state deadline and I'd hate for you to miss out. No cost to you to learn more. Call us back at (855) 968-4599 or visit https://www.surepathassetrecovery.com. Reply STOP to opt out.";
 
 // ---------- Zoho ----------
 let zohoToken = null, zohoTokenAt = 0;
