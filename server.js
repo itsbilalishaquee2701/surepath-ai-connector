@@ -36,7 +36,7 @@ const ASSISTANTS = {
   'Estate': ENV('ASSISTANT_HEIR'),
 };
 
-const MAX_ATTEMPTS = 4;
+const MAX_ATTEMPTS = 8; // ceiling; real cap = 2 tries x numbers on file
 const SLOTS_CT = [9, 13, 17]; // attempt hours, America/Chicago
 
 const VOICEMAILS = {
@@ -168,16 +168,20 @@ async function addTask(contactId, ownerId, subject, description) {
   return zoho('POST', '/Tasks', { data: [task] });
 }
 
-function pickPhone(c, attempt) {
-  // all numbers in priority order: Primary Contact, Alt Phone 1-3; rotate across attempts
+function phoneList(c) {
   const labels = [['Phone','primary'],['Mobile','alt1'],['Home_Phone','alt2'],['Alternate_Phone','alt3']];
   const list = [];
   for (const [f, label] of labels) {
     const n = e164(c[f]);
     if (n && !list.some(x => x.number === n)) list.push({ number: n, label });
   }
+  return list;
+}
+const maxAttemptsFor = (c) => Math.max(1, phoneList(c).length) * 2;
+function pickPhone(c, attempt) {
+  const list = phoneList(c);
   if (!list.length) return null;
-  return list[(Math.max(attempt, 1) - 1) % list.length];
+  return list[Math.min(Math.floor((Math.max(attempt, 1) - 1) / 2), list.length - 1)];
 }
 
 // ---------- core actions ----------
@@ -202,7 +206,7 @@ async function placeCall(c) {
   if (!leadHourOk(phone.number)) { console.log(`lead-local hours block ${c.Full_Name}, retry next slot`); await updateContact(c.id, { AI_Next_Attempt: zDate(nextSlot(new Date())) }); return; }
   const assistantId = ASSISTANTS[c.Lead_Type] || ASSISTANTS['Past Property Sale'];
   const first = c.First_Name || 'there';
-  const vm = VOICEMAILS[Math.min(attempt, 4)]
+  const vm = VOICEMAILS[Math.min(Math.floor((attempt - 1) / 2) + 1, 4)]
     .replaceAll('{firstName}', first)
     .replaceAll('{fullName}', c.Full_Name || first)
     .replaceAll('{propertyAddress}', c.Mailing_Street || 'your property');
@@ -245,7 +249,7 @@ async function handleEndOfCall(msg) {
   const noContact = NO_CONTACT_REASONS.some(r => reason.includes(r)) || /voicemail|no answer/i.test(sd.outcome || '');
 
   const noteBody = [
-    `Attempt ${attempt} of ${MAX_ATTEMPTS} — ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT`,
+    `Attempt ${attempt} of ${maxAttemptsFor(c)} — ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT`,
     `Ended: ${reason || 'unknown'}`,
     sd.outcome ? `Outcome: ${sd.outcome}` : '',
     summary ? `\nSummary:\n${summary}` : '',
@@ -262,9 +266,9 @@ async function handleEndOfCall(msg) {
       const phone = pickPhone(c, 1);
       if (phone) await sendSms(phone.number, SMS_MISSED_CALL.replaceAll('{firstName}', c.First_Name || 'there'));
     }
-    if (attempt >= MAX_ATTEMPTS) {
-      await updateContact(contactId, { AI_Call_Status: 'Completed', AI_Last_Outcome: `All ${MAX_ATTEMPTS} attempts made, no contact`, AI_Next_Attempt: null });
-      await addTask(contactId, c.Owner && c.Owner.id, `Review: ${c.Full_Name} unreachable after ${MAX_ATTEMPTS} AI attempts`, 'The AI agent could not reach this lead. Voicemails were left and a missed-call text was sent. Consider manual outreach or skip-tracing an alternate number.');
+    if (attempt >= maxAttemptsFor(c)) {
+      await updateContact(contactId, { AI_Call_Status: 'Completed', AI_Last_Outcome: `All ${maxAttemptsFor(c)} attempts made across all numbers, no contact`, AI_Next_Attempt: null });
+      await addTask(contactId, c.Owner && c.Owner.id, `Review: ${c.Full_Name} unreachable after ${maxAttemptsFor(c)} AI attempts`, 'The AI agent could not reach this lead. Voicemails were left and a missed-call text was sent. Consider manual outreach or skip-tracing an alternate number.');
     } else {
       const next = nextSlot(new Date());
       await updateContact(contactId, { AI_Call_Status: 'Retry Scheduled', AI_Last_Outcome: `Attempt ${attempt}: ${sd.outcome || reason}`, AI_Next_Attempt: zDate(next) });
