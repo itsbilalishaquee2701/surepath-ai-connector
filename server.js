@@ -150,7 +150,7 @@ const e164 = (p) => {
 const zDate = (d) => d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 // ---------- Zoho record helpers ----------
-const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Alternate_Phone,Lead_Type,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome';
+const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Alternate_Phone,Lead_Type,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome';
 async function getContact(id) {
   const d = await zoho('GET', `/Contacts/${id}?fields=${CONTACT_FIELDS}`);
   return d && d.data && d.data[0];
@@ -169,10 +169,15 @@ async function addTask(contactId, ownerId, subject, description) {
 }
 
 function pickPhone(c, attempt) {
-  const primary = e164(c.Phone) || e164(c.Mobile);
-  const alt = e164(c.Alternate_Phone);
-  if (attempt >= 3 && alt && alt !== primary) return { number: alt, label: 'alternate' };
-  return primary ? { number: primary, label: 'primary' } : (alt ? { number: alt, label: 'alternate' } : null);
+  // all numbers in priority order: Primary Contact, Alt Phone 1-3; rotate across attempts
+  const labels = [['Phone','primary'],['Mobile','alt1'],['Home_Phone','alt2'],['Alternate_Phone','alt3']];
+  const list = [];
+  for (const [f, label] of labels) {
+    const n = e164(c[f]);
+    if (n && !list.some(x => x.number === n)) list.push({ number: n, label });
+  }
+  if (!list.length) return null;
+  return list[(Math.max(attempt, 1) - 1) % list.length];
 }
 
 // ---------- core actions ----------
