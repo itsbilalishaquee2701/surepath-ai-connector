@@ -39,8 +39,9 @@ const ASSISTANTS = {
   'Estate': ENV('ASSISTANT_HEIR'),
 };
 
-const MAX_ATTEMPTS = 8; // ceiling; real cap = 2 tries x numbers on file
-const SLOTS_CT = [9, 13, 17]; // attempt hours, America/Chicago
+const MAX_ATTEMPTS = 12; // ceiling; real cap = 3 tries x numbers on file
+const TRIES = 3; // tries per number
+const SLOTS_CT = [[9, 0], [13, 0], [17, 20]]; // attempt times [hour, minute], America/Chicago
 
 const VOICEMAILS = {
   1: "Hello, this is Emma from Sure Path Asset Recovery. I've been trying to reach {firstName}. I can't legally provide details on this message, but we've identified surplus funds from a property sale that belong to you. Call us the minute you hear this message. My number is (855) 968-4599. Thank you!",
@@ -50,6 +51,13 @@ const VOICEMAILS = {
 };
 
 const SMS_MISSED_CALL = "Hi {firstName}, I just tried calling you regarding surplus funds from your property that belong to you. These funds have a state deadline and I'd hate for you to miss out. No cost to you to learn more. Call us back at (855) 968-4599 or visit https://www.surepathassetrecovery.com. Reply STOP to opt out.";
+
+const SMS_BY_TRY = {
+  1: SMS_MISSED_CALL,
+  2: "Hi {firstName}, it's Emma at Sure Path Asset Recovery following up. Surplus funds tied to your property are still waiting for you, and the state deadline is real. There is no cost to learn more. Call (855) 968-4599 or visit https://www.surepathassetrecovery.com. Reply STOP to opt out.",
+  3: "Hi {firstName}, last try from Sure Path Asset Recovery. We would hate for you to lose the surplus funds owed to you. Please call us at (855) 968-4599 when you can. Reply STOP to opt out.",
+};
+const SMS_HEIR = "Hello, this is Emma from Sure Path Asset Recovery. We've identified surplus funds from a property sale that are owed to {fullName}, who lived at {address}. If you have any information on their whereabouts, I would highly appreciate a call back, or please pass this on to them. You can reach us at (855) 968-4599. Thank you! Reply STOP to opt out.";
 
 // ---------- Zoho ----------
 let zohoToken = null, zohoTokenAt = 0;
@@ -108,24 +116,13 @@ function withinCompanyWindow(d = new Date()) {
   const mins = p.hour * 60 + p.minute;
   return isWeekdayCT(d) && mins >= 8 * 60 + 30 && mins <= 17 * 60 + 30;
 }
-// next 9am/1pm/5pm CT slot strictly after `from`, on a weekday
+// next 9:00am/1:00pm/5:20pm CT slot strictly after `from`, on a weekday
 function nextSlot(from = new Date()) {
-  for (let add = 0; add < 7 * 24; add++) {
-    const t = new Date(from.getTime() + add * 3600 * 1000);
+  const start = new Date(Math.floor(from.getTime() / 60000) * 60000 + 60000);
+  for (let i = 0; i < 9 * 24 * 60; i++) {
+    const t = new Date(start.getTime() + i * 60000);
     const p = ctParts(t);
-    if (!isWeekdayCT(t)) continue;
-    for (const h of SLOTS_CT) {
-      if (p.hour < h || (add > 0 && p.hour === h)) {
-        // build a Date at h:00 CT on t's CT date by scanning minute-precision
-        const target = new Date(t);
-        target.setUTCMinutes(0, 0, 0);
-        for (let i = 0; i < 48; i++) {
-          const cand = new Date(target.getTime() + i * 30 * 60 * 1000);
-          const cp = ctParts(cand);
-          if (cp.y === p.y && cp.m === p.m && cp.d === p.d && cp.hour === h && cp.minute === 0 && cand > from) return cand;
-        }
-      }
-    }
+    if (isWeekdayCT(t) && SLOTS_CT.some(([h, m]) => p.hour === h && p.minute === m)) return t;
   }
   return new Date(from.getTime() + 24 * 3600 * 1000);
 }
@@ -189,11 +186,11 @@ function phoneList(c) {
   }
   return list;
 }
-const maxAttemptsFor = (c) => Math.max(1, phoneList(c).length) * 2;
+const maxAttemptsFor = (c) => Math.max(1, phoneList(c).length) * TRIES;
 function pickPhone(c, attempt) {
   const list = phoneList(c);
   if (!list.length) return null;
-  return list[Math.min(Math.floor((Math.max(attempt, 1) - 1) / 2), list.length - 1)];
+  return list[Math.min(Math.floor((Math.max(attempt, 1) - 1) / TRIES), list.length - 1)];
 }
 
 // ---------- core actions ----------
@@ -218,7 +215,7 @@ async function placeCall(c) {
   if (!leadHourOk(phone.number)) { console.log(`lead-local hours block ${c.Full_Name}, retry next slot`); await updateContact(c.id, { AI_Next_Attempt: zDate(nextSlot(new Date())) }); return; }
   const assistantId = ASSISTANTS[c.Lead_Type] || ASSISTANTS['Past Property Sale'];
   const first = c.First_Name || 'there';
-  const vm = VOICEMAILS[Math.min(Math.floor((attempt - 1) / 2) + 1, 4)]
+  const vm = VOICEMAILS[Math.min(Math.floor((attempt - 1) / TRIES) + 1, 4)]
     .replaceAll('{firstName}', first)
     .replaceAll('{fullName}', c.Full_Name || first)
     .replaceAll('{propertyAddress}', c.Mailing_Street || 'your property');
@@ -274,15 +271,20 @@ async function handleEndOfCall(msg) {
     return;
   }
   if (noContact) {
-    if (attempt === 1) {
-      const phone = pickPhone(c, 1);
-      if (phone) await sendSms(phone.number, SMS_MISSED_CALL.replaceAll('{firstName}', c.First_Name || 'there'));
+    const sp = pickPhone(c, attempt), tryNo = ((attempt - 1) % TRIES) + 1, isAlt = Math.floor((attempt - 1) / TRIES) > 0;
+    if (sp) {
+      const fn = c.First_Name || 'there';
+      const addr = [c.Mailing_Street, c.Mailing_City, c.Mailing_State].filter(Boolean).join(', ') || 'your property';
+      const body = isAlt ? (tryNo === 1 ? SMS_HEIR.replaceAll('{fullName}', c.Full_Name || fn).replaceAll('{address}', addr) : null)
+        : SMS_BY_TRY[tryNo].replaceAll('{firstName}', fn);
+      if (body) await sendSms(sp.number, body);
     }
     if (attempt >= maxAttemptsFor(c)) {
       await updateContact(contactId, { AI_Call_Status: 'Completed', AI_Last_Outcome: `All ${maxAttemptsFor(c)} attempts made across all numbers, no contact`, AI_Next_Attempt: null });
       await addTask(contactId, c.Owner && c.Owner.id, `Review: ${c.Full_Name} unreachable after ${maxAttemptsFor(c)} AI attempts`, 'The AI agent could not reach this lead. Voicemails were left and a missed-call text was sent. Consider manual outreach or skip-tracing an alternate number.');
     } else {
-      const next = nextSlot(new Date());
+      let next = nextSlot(new Date());
+      if (attempt % TRIES === 0) { const soon = new Date(Date.now() + 10 * 60000); if (withinCompanyWindow(soon)) next = soon; } // next number starts right away if still in window
       await updateContact(contactId, { AI_Call_Status: 'Retry Scheduled', AI_Last_Outcome: `Attempt ${attempt}: ${sd.outcome || reason}`, AI_Next_Attempt: zDate(next) });
       console.log(`retry ${c.Full_Name} at ${next.toISOString()}`);
     }
