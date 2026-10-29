@@ -329,6 +329,21 @@ async function tick() {
 }
 setInterval(tick, 3 * 60 * 1000);
 
+// keeps Deals."Sure Path Revenue" = Amount x Fee % (Zoho Standard has no formula fields) so Zoho Analytics can sum it
+async function syncRevenue() {
+  try {
+    for (let page = 1; page <= 10; page++) {
+      const d = await zoho('GET', `/Deals?fields=Amount,Fee_Percent,Sure_Path_Revenue&per_page=200&page=${page}`).catch(() => null);
+      const rows = (d && d.data) || [];
+      const fix = rows.map(x => ({ id: x.id, Sure_Path_Revenue: Math.round((x.Amount || 0) * (x.Fee_Percent == null ? DEFAULT_FEE : x.Fee_Percent)) / 100 })).filter((u, i) => u.Sure_Path_Revenue !== (rows[i].Sure_Path_Revenue || 0));
+      for (let i = 0; i < fix.length; i += 100) await zoho('PUT', '/Deals', { data: fix.slice(i, i + 100), trigger: [] });
+      if (!(d && d.info && d.info.more_records)) break;
+    }
+  } catch (e) { console.error('syncRevenue:', e.message); }
+}
+setInterval(syncRevenue, 10 * 60 * 1000);
+setTimeout(syncRevenue, 20000);
+
 // watchdog: a contact stuck in 'Calling' for over an hour goes back to retry
 setInterval(async () => {
   try {
