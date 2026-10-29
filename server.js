@@ -28,6 +28,9 @@ const TWILIO_SID = ENV('TWILIO_SID');
 const TWILIO_TOKEN = ENV('TWILIO_TOKEN');
 const TWILIO_MSG_SID = ENV('TWILIO_MSG_SID');
 const PORT = process.env.PORT || 10000;
+const DASH_KEY = process.env.DASH_KEY || '';
+const DEFAULT_FEE = Number(process.env.DEFAULT_FEE_PCT || 20);
+const dash = require('./dashboard');
 
 const ASSISTANTS = {
   'Past Property Sale': ENV('ASSISTANT_COLD'),
@@ -150,7 +153,7 @@ const e164 = (p) => {
 const zDate = (d) => d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 // ---------- Zoho record helpers ----------
-const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Alternate_Phone,Lead_Type,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome';
+const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Alternate_Phone,Lead_Type,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County';
 async function getContact(id) {
   const d = await zoho('GET', `/Contacts/${id}?fields=${CONTACT_FIELDS}`);
   return d && d.data && d.data[0];
@@ -160,6 +163,15 @@ async function updateContact(id, fields) {
 }
 async function addNote(contactId, title, content) {
   return zoho('POST', '/Notes', { data: [{ Note_Title: title.slice(0, 120), Note_Content: content.slice(0, 32000), Parent_Id: { module: { api_name: 'Contacts' }, id: contactId }, se_module: 'Contacts' }] });
+}
+async function createDeal(c, summary) {
+  const ex = await zoho('GET', `/Deals/search?criteria=(Contact_Name:equals:${c.id})&fields=id`).catch(() => null);
+  if (ex && ex.data && ex.data.length) return;
+  const close = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const deal = { Deal_Name: `${c.Full_Name} - Surplus Recovery`, Stage: 'Qualification', Amount: Number(c.Surplus_Amount) || 0, Fee_Percent: DEFAULT_FEE, Contact_Name: { id: c.id }, Closing_Date: close, Description: (summary || '').slice(0, 1500) };
+  if (c.Owner && c.Owner.id) deal.Owner = { id: c.Owner.id };
+  await zoho('POST', '/Deals', { data: [deal] });
+  console.log('deal created for', c.Full_Name);
 }
 async function addTask(contactId, ownerId, subject, description) {
   const due = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
@@ -278,6 +290,9 @@ async function handleEndOfCall(msg) {
   }
   // real conversation happened
   await updateContact(contactId, { AI_Call_Status: 'Completed', AI_Last_Outcome: (sd.outcome || 'Conversation completed').slice(0, 95), AI_Next_Attempt: null });
+  if (sd.agreement_email_requested === true || /agreement/i.test(sd.outcome || '')) {
+    await createDeal(c, summary).catch(e => console.error('deal create failed:', e.message));
+  }
   const needsFollowUp = sd.agreement_email_requested === true || sd.callback_time || /agreement|callback|interested/i.test(sd.outcome || '');
   if (needsFollowUp) {
     await addTask(contactId, c.Owner && c.Owner.id, `Follow up: ${c.Full_Name} — ${sd.outcome || 'interested'}`, [sd.callback_time ? `Requested callback: ${sd.callback_time}` : '', sd.email ? `Email given on call: ${sd.email}` : '', summary].filter(Boolean).join('\n'));
@@ -330,6 +345,13 @@ const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (c) 
 http.createServer(async (req, res) => {
   const ok = (obj) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj || { ok: true })); };
   try {
+    if (req.method === 'GET' && req.url.startsWith('/dashboard')) {
+      const key = new URL(req.url, 'http://x').searchParams.get('key');
+      if (!DASH_KEY || key !== DASH_KEY) { res.writeHead(404); return res.end('not found'); }
+      const html = dash.render(await dash.compute(zoho));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
     if (req.method === 'GET' && req.url.startsWith('/healthz')) return ok({ ok: true, window: withinCompanyWindow() });
     if (req.method === 'POST' && req.url.startsWith('/zoho-lead')) {
       const body = JSON.parse(await readBody(req) || '{}');
