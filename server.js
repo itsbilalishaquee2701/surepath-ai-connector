@@ -228,7 +228,7 @@ async function placeCall(c) {
       variableValues: {
         customerName: first,
         propertyAddress: c.Other_Street || c.Mailing_Street || 'your property',
-        propertyCityState: [c.Mailing_City, c.Mailing_State].filter(Boolean).join(', '),
+        propertyCityState: (c.Other_Street ? [c.Other_City, c.Other_State] : [c.Mailing_City, c.Mailing_State]).filter(Boolean).join(', '),
         zohoContactId: c.id,
       },
       metadata: { zohoContactId: c.id, attempt },
