@@ -369,8 +369,8 @@ async function syncTags() {
     for (const [t, ids] of Object.entries(groups)) {
       for (let i = 0; i < ids.length; i += 100) {
         const q = ids.slice(i, i + 100).join(',');
-        await zoho('POST', `/Contacts/actions/remove_tags?ids=${q}&tag_names=${encodeURIComponent(ALL_TAGS.filter(x => x !== t).join(','))}`).catch(() => {});
-        await zoho('POST', `/Contacts/actions/add_tags?ids=${q}&tag_names=${encodeURIComponent(t)}`);
+        await zoho('POST', `/Contacts/actions/remove_tags?ids=${q}&tag_names=${encodeURIComponent(ALL_TAGS.filter(x => x !== t).join(','))}`, {}).catch(() => {});
+        await zoho('POST', `/Contacts/actions/add_tags?ids=${q}&tag_names=${encodeURIComponent(t)}`, {});
         ids.slice(i, i + 100).forEach(id => tagged.set(id, t));
       }
     }
