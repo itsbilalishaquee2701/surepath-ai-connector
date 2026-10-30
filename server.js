@@ -348,6 +348,37 @@ async function syncRevenue() {
 setInterval(syncRevenue, 10 * 60 * 1000);
 setTimeout(syncRevenue, 20000);
 
+// tags each Contact by its Deal stage: Qualified / In Process / Closed Client / Lost
+const STAGE_TAG = { 'Claimant Qualification': 'Qualified', 'Proposal/Price Quote': 'Qualified', 'Contingency Fee Agreement Sent': 'Qualified', 'Contingency Fee Agreement Received': 'Qualified', 'Claim Reviewed': 'In Process', 'Claim Confirmed': 'In Process', 'Claim Submitted': 'In Process', 'Fee Affirmation Agreement Sent': 'In Process', 'Funds Received': 'In Process', 'Funds Dispersed': 'In Process', 'Claim Complete': 'Closed Client', 'Ask for Review': 'Closed Client', 'Closed Lost': 'Lost', 'Closed Lost to Competition': 'Lost' };
+const TAG_RANK = { 'Lost': 0, 'Qualified': 1, 'In Process': 2, 'Closed Client': 3 };
+const ALL_TAGS = Object.keys(TAG_RANK);
+const tagged = new Map();
+async function syncTags() {
+  try {
+    const best = new Map();
+    for (let page = 1; page <= 10; page++) {
+      const d = await zoho('GET', `/Deals?fields=Stage,Contact_Name&per_page=200&page=${page}`).catch(() => null);
+      for (const x of (d && d.data) || []) {
+        const t = STAGE_TAG[x.Stage], cid = x.Contact_Name && x.Contact_Name.id;
+        if (t && cid && (!best.has(cid) || TAG_RANK[t] > TAG_RANK[best.get(cid)])) best.set(cid, t);
+      }
+      if (!(d && d.info && d.info.more_records)) break;
+    }
+    const groups = {};
+    for (const [cid, t] of best) if (tagged.get(cid) !== t) (groups[t] = groups[t] || []).push(cid);
+    for (const [t, ids] of Object.entries(groups)) {
+      for (let i = 0; i < ids.length; i += 100) {
+        const q = ids.slice(i, i + 100).join(',');
+        await zoho('POST', `/Contacts/actions/remove_tags?ids=${q}&tag_names=${encodeURIComponent(ALL_TAGS.filter(x => x !== t).join(','))}`).catch(() => {});
+        await zoho('POST', `/Contacts/actions/add_tags?ids=${q}&tag_names=${encodeURIComponent(t)}`);
+        ids.slice(i, i + 100).forEach(id => tagged.set(id, t));
+      }
+    }
+  } catch (e) { console.error('syncTags:', e.message); }
+}
+setInterval(syncTags, 10 * 60 * 1000);
+setTimeout(syncTags, 40000);
+
 // watchdog: a contact stuck in 'Calling' for over an hour goes back to retry
 setInterval(async () => {
   try {
