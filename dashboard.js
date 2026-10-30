@@ -14,14 +14,15 @@ async function fetchAll(zoho, module, fields) {
 }
 
 let cache = null, cacheAt = 0;
+const WON = ['Claim Complete', 'Ask for Review', 'Closed Won'];
 async function compute(zoho) {
   if (cache && Date.now() - cacheAt < 5 * 60 * 1000) return cache;
   const contacts = await fetchAll(zoho, 'Contacts', 'Lead_Type,AI_Call_Status,AI_Last_Outcome,Surplus_Amount');
   const deals = await fetchAll(zoho, 'Deals', 'Stage,Amount,Fee_Percent,Closing_Date');
   const count = (arr, f) => arr.reduce((m, x) => { const k = f(x) || 'Not set'; m[k] = (m[k] || 0) + 1; return m; }, {});
-  const won = deals.filter(d => d.Stage === 'Closed Won');
+  const won = deals.filter(d => WON.includes(d.Stage));
   const lost = deals.filter(d => /Closed Lost/.test(d.Stage || ''));
-  const open = deals.filter(d => !/^Closed/.test(d.Stage || ''));
+  const open = deals.filter(d => !WON.includes(d.Stage) && !/^Closed/.test(d.Stage || ''));
   const fee = (d) => (Number(d.Amount) || 0) * ((d.Fee_Percent != null ? Number(d.Fee_Percent) : DEFAULT_FEE) / 100);
   const months = {};
   for (const d of won) { const m = (d.Closing_Date || '').slice(0, 7) || 'Undated'; months[m] = (months[m] || 0) + fee(d); }

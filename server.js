@@ -150,7 +150,7 @@ const e164 = (p) => {
 const zDate = (d) => d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 // ---------- Zoho record helpers ----------
-const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Other_Phone,Lead_Type,Other_Street,Other_City,Other_State,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County';
+const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Other_Phone,Lead_Type,Other_Street,Other_City,Other_State,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County,Case_Number,Title,Skype_ID,Description';
 async function getContact(id) {
   const d = await zoho('GET', `/Contacts/${id}?fields=${CONTACT_FIELDS}`);
   return d && d.data && d.data[0];
@@ -165,7 +165,11 @@ async function createDeal(c, summary) {
   const ex = await zoho('GET', `/Deals/search?criteria=(Contact_Name:equals:${c.id})&fields=id`).catch(() => null);
   if (ex && ex.data && ex.data.length) return;
   const close = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  const deal = { Deal_Name: `${c.Full_Name} - Surplus Recovery`, Stage: 'Qualification', Amount: Number(c.Surplus_Amount) || 0, Fee_Percent: DEFAULT_FEE, Contact_Name: { id: c.id }, Closing_Date: close, Description: (summary || '').slice(0, 1500) };
+  const deal = { Deal_Name: `${c.Full_Name} - Surplus Recovery`, Stage: 'Claimant Qualification', Amount: Number(c.Surplus_Amount) || 0, Fee_Percent: DEFAULT_FEE, Contact_Name: { id: c.id }, Closing_Date: close, Description: (summary || '').slice(0, 1500) };
+  const dl = k => { const m = new RegExp('^\\s*' + k + '\\s*:\\s*(.+)$', 'im').exec(c.Description || ''); return m ? m[1].trim().slice(0, 250) : undefined; };
+  const bid = parseFloat(String(dl('Opening Bid') || '').replace(/[^0-9.]/g, ''));
+  Object.assign(deal, { Case_Number: c.Case_Number || dl('Case Number'), Sale_Type: c.Title || dl('Sale Type'), Auction_Status: c.Skype_ID || dl('Auction Status'), Parcel_ID: dl('Parcel ID'), Liens: dl('Liens'), Trustee_or_County_Info: dl('Trustee / County Information') || dl('Trustee or County Information') || dl('Trustee'), ...(bid ? { Opening_Bid: bid } : {}) });
+  Object.keys(deal).forEach(k => deal[k] === undefined && delete deal[k]);
   if (c.Owner && c.Owner.id) deal.Owner = { id: c.Owner.id };
   await zoho('POST', '/Deals', { data: [deal] });
   console.log('deal created for', c.Full_Name);
