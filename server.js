@@ -150,7 +150,7 @@ const e164 = (p) => {
 const zDate = (d) => d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 // ---------- Zoho record helpers ----------
-const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Alternate_Phone,Lead_Type,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County';
+const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Other_Phone,Lead_Type,Other_Street,Other_City,Other_State,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County';
 async function getContact(id) {
   const d = await zoho('GET', `/Contacts/${id}?fields=${CONTACT_FIELDS}`);
   return d && d.data && d.data[0];
@@ -178,7 +178,7 @@ async function addTask(contactId, ownerId, subject, description) {
 }
 
 function phoneList(c) {
-  const labels = [['Phone','primary'],['Mobile','alt1'],['Home_Phone','alt2'],['Alternate_Phone','alt3']];
+  const labels = [['Phone','primary'],['Mobile','alt1'],['Home_Phone','alt2'],['Other_Phone','alt3']];
   const list = [];
   for (const [f, label] of labels) {
     const n = e164(c[f]);
@@ -218,7 +218,7 @@ async function placeCall(c) {
   const vm = VOICEMAILS[Math.min(Math.floor((attempt - 1) / TRIES) + 1, 4)]
     .replaceAll('{firstName}', first)
     .replaceAll('{fullName}', c.Full_Name || first)
-    .replaceAll('{propertyAddress}', c.Mailing_Street || 'your property');
+    .replaceAll('{propertyAddress}', c.Other_Street || c.Mailing_Street || 'your property');
   const call = await vapi('POST', '/call', {
     assistantId,
     phoneNumberId: VAPI_PHONE_NUMBER_ID,
@@ -227,7 +227,7 @@ async function placeCall(c) {
       voicemailMessage: vm,
       variableValues: {
         customerName: first,
-        propertyAddress: c.Mailing_Street || 'your property',
+        propertyAddress: c.Other_Street || c.Mailing_Street || 'your property',
         propertyCityState: [c.Mailing_City, c.Mailing_State].filter(Boolean).join(', '),
         zohoContactId: c.id,
       },
@@ -274,7 +274,7 @@ async function handleEndOfCall(msg) {
     const sp = pickPhone(c, attempt), tryNo = ((attempt - 1) % TRIES) + 1, isAlt = Math.floor((attempt - 1) / TRIES) > 0;
     if (sp) {
       const fn = c.First_Name || 'there';
-      const addr = [c.Mailing_Street, c.Mailing_City, c.Mailing_State].filter(Boolean).join(', ') || 'your property';
+      const addr = [c.Other_Street || c.Mailing_Street, c.Other_Street ? c.Other_City : c.Mailing_City, c.Other_Street ? c.Other_State : c.Mailing_State].filter(Boolean).join(', ') || 'your property';
       const body = isAlt ? (tryNo === 1 ? SMS_HEIR.replaceAll('{fullName}', c.Full_Name || fn).replaceAll('{address}', addr) : null)
         : SMS_BY_TRY[tryNo].replaceAll('{firstName}', fn);
       if (body) await sendSms(sp.number, body);
@@ -305,7 +305,7 @@ async function handleEndOfCall(msg) {
 async function logInboundByPhone(number, msg, summary, sd) {
   if (!number) return;
   try {
-    const d = await zoho('GET', `/Contacts/search?criteria=((Mobile:equals:${encodeURIComponent(number)})or(Alternate_Phone:equals:${encodeURIComponent(number)}))&fields=id,Full_Name,Owner`);
+    const d = await zoho('GET', `/Contacts/search?criteria=((Mobile:equals:${encodeURIComponent(number)})or(Other_Phone:equals:${encodeURIComponent(number)}))&fields=id,Full_Name,Owner`);
     const c = d && d.data && d.data[0];
     if (!c) return;
     await addNote(c.id, `AI Call — Inbound (${sd.outcome || 'answered'})`, `Inbound call from ${number} at ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT\n\n${summary || ''}`);
