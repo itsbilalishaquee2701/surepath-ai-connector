@@ -69,13 +69,14 @@ async function zohoAuth() {
   zohoToken = d.access_token; zohoTokenAt = Date.now();
   return zohoToken;
 }
-async function zoho(method, path, body) {
+async function zoho(method, path, body, retried) {
   const r = await fetch('https://www.zohoapis.com/crm/v8' + path, {
     method,
     headers: { Authorization: 'Zoho-oauthtoken ' + (await zohoAuth()), 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (r.status === 204) return null;
+  if (r.status === 401 && !retried) { zohoToken = null; return zoho(method, path, body, true); } // token revoked: fetch a fresh one
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`zoho ${method} ${path} -> ${r.status}: ${JSON.stringify(d).slice(0, 300)}`);
   return d;
