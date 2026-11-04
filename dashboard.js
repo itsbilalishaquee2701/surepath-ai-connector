@@ -17,7 +17,7 @@ let cache = null, cacheAt = 0;
 const WON = ['Claim Complete', 'Ask for Review', 'Closed Won'];
 async function compute(zoho) {
   if (cache && Date.now() - cacheAt < 5 * 60 * 1000) return cache;
-  const contacts = await fetchAll(zoho, 'Contacts', 'Lead_Type,AI_Call_Status,AI_Last_Outcome,Surplus_Amount');
+  const contacts = await fetchAll(zoho, 'Contacts', 'Lead_Type,AI_Call_Status,Tags,Surplus_Amount');
   const deals = await fetchAll(zoho, 'Deals', 'Stage,Amount,Fee_Percent,Closing_Date');
   const count = (arr, f) => arr.reduce((m, x) => { const k = f(x) || 'Not set'; m[k] = (m[k] || 0) + 1; return m; }, {});
   const won = deals.filter(d => WON.includes(d.Stage));
@@ -30,7 +30,7 @@ async function compute(zoho) {
     contacts: contacts.length,
     leadTypes: count(contacts, c => c.Lead_Type),
     callStatus: count(contacts, c => c.AI_Call_Status),
-    engaged: contacts.filter(c => /callback|agreement|interested/i.test(c.AI_Last_Outcome || '')).length,
+    engaged: contacts.filter(c => (c.Tags || []).some(t => /^AI - (Callback|Agreement Requested|Interested)$/.test(t.name))).length,
     pool: contacts.reduce((s, c) => s + (Number(c.Surplus_Amount) || 0), 0),
     stages: count(deals, d => d.Stage),
     deals: deals.length, open: open.length, won: won.length, lost: lost.length,

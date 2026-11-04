@@ -7,7 +7,7 @@
 // Call cadence (client punch list): attempts at 9am / 1pm / 5pm Central,
 // Mon-Fri, max 4 attempts, lead-local 8am-9pm respected by area code.
 // All state lives in Zoho custom fields (AI_Call_Status, AI_Call_Attempts,
-// AI_Next_Attempt, AI_Last_Outcome) so the server itself is stateless.
+// AI_Next_Attempt; outcome is an "AI - ..." tag) so the server itself is stateless.
 //
 // No npm dependencies. Node 18+.
 
@@ -150,13 +150,43 @@ const e164 = (p) => {
 const zDate = (d) => d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 // ---------- Zoho record helpers ----------
-const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Other_Phone,Lead_Type,Other_Street,Other_City,Other_State,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County,Case_Number,Title,Skype_ID,Description';
+const CONTACT_FIELDS = 'id,First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Other_Phone,AI_Last_Outcome,Lead_Type,Other_Street,Other_City,Other_State,Mailing_Street,Mailing_City,Mailing_State,Owner,AI_Call_Status,AI_Call_Attempts,AI_Next_Attempt,AI_Last_Outcome,Surplus_Amount,County,Case_Number,Title,Skype_ID,Description';
 async function getContact(id) {
   const d = await zoho('GET', `/Contacts/${id}?fields=${CONTACT_FIELDS}`);
   return d && d.data && d.data[0];
 }
+// NOTE: Contacts API name AI_Last_Outcome now holds the "Parcel ID" field (label renamed; Zoho cannot delete it or change api names)
+// call outcome shows as one visible "AI - ..." tag on the contact (replaces the old AI_Last_Outcome field)
+function outcomeTag(t) {
+  t = String(t || '');
+  if (/do not call/i.test(t)) return 'AI - Do Not Call';
+  if (/no usable phone/i.test(t)) return 'AI - No Valid Phone';
+  if (/queued/i.test(t)) return 'AI - Queued';
+  if (/dialing/i.test(t)) return 'AI - Calling';
+  if (/^all \d+ attempts/i.test(t)) return 'AI - Unreachable';
+  if (/voicemail/i.test(t)) return 'AI - Voicemail';
+  if (/^error/i.test(t)) return 'AI - Retry';
+  if (/^attempt \d+:/i.test(t)) return 'AI - No Answer';
+  if (/agreement/i.test(t)) return 'AI - Agreement Requested';
+  if (/call ?back/i.test(t)) return 'AI - Callback';
+  if (/not interested|declin/i.test(t)) return 'AI - Not Interested';
+  if (/interested/i.test(t)) return 'AI - Interested';
+  return 'AI - Spoke';
+}
+async function setOutcomeTag(id, text) {
+  try {
+    const tag = outcomeTag(text);
+    const d = await zoho('GET', `/Contacts/${id}?fields=Tags`).catch(() => null);
+    const cur = ((d && d.data && d.data[0] && d.data[0].Tags) || []).map(x => x.name).filter(n => /^AI - /.test(n) && n !== tag);
+    for (const n of cur) await zoho('POST', '/Contacts/actions/remove_tags', { tags: [{ name: n }], ids: [id] }).catch(() => {});
+    await zoho('POST', '/Contacts/actions/add_tags', { tags: [{ name: tag }], ids: [id] });
+  } catch (e) { console.error('outcome tag:', e.message); }
+}
 async function updateContact(id, fields) {
-  return zoho('PUT', '/Contacts/' + id, { data: [{ id, ...fields }] });
+  const { AI_Last_Outcome, ...rest } = fields;
+  const r = await zoho('PUT', '/Contacts/' + id, { data: [{ id, ...rest }] });
+  if (AI_Last_Outcome) await setOutcomeTag(id, AI_Last_Outcome);
+  return r;
 }
 async function addNote(contactId, title, content) {
   return zoho('POST', '/Notes', { data: [{ Note_Title: title.slice(0, 120), Note_Content: content.slice(0, 32000), Parent_Id: { module: { api_name: 'Contacts' }, id: contactId }, se_module: 'Contacts' }] });
@@ -168,7 +198,7 @@ async function createDeal(c, summary) {
   const deal = { Deal_Name: `${c.Full_Name} - Surplus Recovery`, Stage: 'Claimant Qualification', Amount: Number(c.Surplus_Amount) || 0, Fee_Percent: DEFAULT_FEE, Contact_Name: { id: c.id }, Closing_Date: close, Description: (summary || '').slice(0, 1500) };
   const dl = k => { const m = new RegExp('^\\s*' + k + '\\s*:\\s*(.+)$', 'im').exec(c.Description || ''); return m ? m[1].trim().slice(0, 250) : undefined; };
   const bid = parseFloat(String(dl('Opening Bid') || '').replace(/[^0-9.]/g, ''));
-  Object.assign(deal, { Case_Number: c.Case_Number || dl('Case Number'), Sale_Type: c.Title || dl('Sale Type'), Auction_Status: c.Skype_ID || dl('Auction Status'), Parcel_ID: dl('Parcel ID'), Liens: dl('Liens'), Trustee_or_County_Info: dl('Trustee / County Information') || dl('Trustee or County Information') || dl('Trustee'), ...(bid ? { Opening_Bid: bid } : {}) });
+  Object.assign(deal, { Case_Number: c.Case_Number || dl('Case Number'), Sale_Type: c.Title || dl('Sale Type'), Auction_Status: c.Skype_ID || dl('Auction Status'), Parcel_ID: c.AI_Last_Outcome || dl('Parcel ID'), Liens: dl('Liens'), Trustee_or_County_Info: dl('Trustee / County Information') || dl('Trustee or County Information') || dl('Trustee'), ...(bid ? { Opening_Bid: bid } : {}) });
   Object.keys(deal).forEach(k => deal[k] === undefined && delete deal[k]);
   if (c.Owner && c.Owner.id) deal.Owner = { id: c.Owner.id };
   await zoho('POST', '/Deals', { data: [deal] });
