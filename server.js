@@ -36,6 +36,7 @@ const ASSISTANTS = {
   'Past Property Sale': ENV('ASSISTANT_COLD'),
   'Pre-Foreclosure': ENV('ASSISTANT_PRE'),
   'Heir': ENV('ASSISTANT_HEIR'),
+  'Heir / Estate': ENV('ASSISTANT_HEIR'),
   'Estate': ENV('ASSISTANT_HEIR'),
 };
 
