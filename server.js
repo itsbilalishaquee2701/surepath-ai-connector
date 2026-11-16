@@ -350,6 +350,7 @@ async function logInboundByPhone(number, msg, summary, sd) {
 
 // ---------- scheduler ----------
 let ticking = false;
+let coolUntil = 0;
 async function tick() {
   if (ticking) return; ticking = true;
   try {
@@ -357,8 +358,18 @@ async function tick() {
     const crit = encodeURIComponent('((AI_Call_Status:equals:Pending)or(AI_Call_Status:equals:Retry Scheduled))');
     const d = await zoho('GET', `/Contacts/search?criteria=${crit}&fields=${CONTACT_FIELDS}&per_page=50`).catch(e => { if (!/204/.test(e.message)) console.error('search:', e.message); return null; });
     const due = (d && d.data || []).filter(c => !c.AI_Next_Attempt || new Date(c.AI_Next_Attempt) <= new Date());
-    for (const c of due.slice(0, 3)) { // max 3 calls per tick to stay under the Vapi concurrency limit
-      try { await placeCall(c); } catch (e) { console.error(`call failed ${c.id}:`, e.message); if (/Concurrency/i.test(e.message)) break; /* Vapi line limit: keep queued, retry next tick */ await updateContact(c.id, { AI_Call_Status: 'Retry Scheduled', AI_Last_Outcome: ('Error: ' + e.message).slice(0, 95), AI_Next_Attempt: zDate(nextSlot(new Date())) }).catch(() => {}); }
+    // stay under the Vapi line limit so it never hits the wall (each hit emails the owner)
+    if (!due.length || Date.now() < coolUntil) return;
+    const MAXC = parseInt(process.env.VAPI_MAX_CONCURRENT || '4', 10);
+    let free = 1;
+    try {
+      const live = await vapi('GET', '/call?limit=100');
+      const active = (Array.isArray(live) ? live : []).filter(x => ['queued', 'ringing', 'in-progress', 'forwarding'].includes(x.status)).length;
+      free = MAXC - active;
+    } catch (e) { free = 1; }
+    if (free <= 0) { console.log('vapi lines busy, waiting'); return; }
+    for (const c of due.slice(0, Math.min(3, free))) { // max 3 calls per tick to stay under the Vapi concurrency limit
+      try { await placeCall(c); } catch (e) { console.error(`call failed ${c.id}:`, e.message); if (/Concurrency/i.test(e.message)) { coolUntil = Date.now() + 10 * 60 * 1000; break; } /* Vapi line limit: keep queued, retry next tick */ await updateContact(c.id, { AI_Call_Status: 'Retry Scheduled', AI_Last_Outcome: ('Error: ' + e.message).slice(0, 95), AI_Next_Attempt: zDate(nextSlot(new Date())) }).catch(() => {}); }
     }
   } catch (e) { console.error('tick error:', e.message); }
   finally { ticking = false; }
